@@ -117,37 +117,62 @@ private:
 
 	bool initBuffer()
 	{
+		// 生成缓冲区对象名
+		// BUfferName中的每个Buffer从BufferName[0]中
+		// 执行完后会得到 BufferName[VERTEX] BufferName[ELEMENT] BufferName[TRANSPTION] 这三个数组
 		glGenBuffers(buffer::MAX, &BufferName[0]);
 
+		// 将对应的坐标存入BufferName[ELEMENT]中的GPU缓存中
+		// 初始化GPU索引缓冲区
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BufferName[buffer::ELEMENT]);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, ElementSize, ElementData, GL_STATIC_DRAW);
+		// 释放绑定
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
+		// 初始化GPU顶点缓冲区VBO
 		glBindBuffer(GL_ARRAY_BUFFER, BufferName[buffer::VERTEX]);
 		glBufferData(GL_ARRAY_BUFFER, VertexSize, VertexData, GL_STATIC_DRAW);
+		// 释放绑定
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
-
+		
+		// uniform buffer中的GPU数据最少要按多少字节对齐，这是由GPU厂商硬件固定
 		GLint UniformBufferOffset(0);
 		glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &UniformBufferOffset);
+
+		  // 满足分配的内存的最低要求
+	     //  为什么不能直接用sizeof(mat4) 呢？？所有在GPU中的数据都要以GPU对齐为准
+		//   如果直接使用sizeof(mat4) 那么获取到的block size为64 ，GPU对齐要求为256字节，那么在工艺    单执行的时候就会出错。
 		GLint UniformBlockSize = glm::max(GLint(sizeof(glm::mat4)), UniformBufferOffset);
 
+		// 绑定UBO缓冲区
 		glBindBuffer(GL_UNIFORM_BUFFER, BufferName[buffer::TRANSFORM]);
+		
+		// 为该UBO在GPU上占用一块内存 不提供初始数据 之后CPU通过BufferName[buffer::TRANSFORM]
+		// 寻找这块内存 GPU通过semantic::uniform::TRANSFORM
 		glBufferData(GL_UNIFORM_BUFFER, UniformBlockSize, NULL, GL_DYNAMIC_DRAW);
+		// 释放绑定
 		glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
 		return this->checkError("initBuffer");
 	}
 
 	bool initVertexArray()
 	{
+		// 生成一个VAO
 		glGenVertexArrays(1, &VertexArrayName);
+		//opengl 绑定这个VAO 
 		glBindVertexArray(VertexArrayName);
-			glBindBuffer(GL_ARRAY_BUFFER, BufferName[buffer::VERTEX]);
-			glVertexAttribPointer(semantic::attr::POSITION, 2, GL_FLOAT, GL_FALSE, 0, 0);
+		// 绑定VBO VB0中的数据存取到对应的buffer里
+		// 这段代码并不会被VAO记住 只是提供上下文
+		glBindBuffer(GL_ARRAY_BUFFER, BufferName[buffer::VERTEX]);
+		
+		//将GPU如何读取数据的规则写进VAO
+		//1对于顶点属性 2每个顶点取两个分量 3每个分量是FLOAT 数据来源是刚刚的绑定的GL_ARRAY_BUFFER 4不进行归一化 5从buffer的第0个字节开始 6数据是连续排列的
+		glVertexAttribPointer(semantic::attr::POSITION, 2, GL_FLOAT, GL_FALSE, 0, 0);
+		//允许顶点着色器使用POITION属性 这个启用状态也会被记录到VAO
+		glEnableVertexAttribArray(semantic::attr::POSITION);
 
-			glEnableVertexAttribArray(semantic::attr::POSITION);
-
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BufferName[buffer::ELEMENT]);
+		//告诉VAO EBO的绑定
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BufferName[buffer::ELEMENT]);
 		glBindVertexArray(0);
 
 		return this->checkError("initVertexArray");
@@ -162,7 +187,7 @@ private:
 		if(Validated)
 			Validated = initProgram();
 		if(Validated)
-			Validated = initBuffer();
+			Validated = initBuffer();                                              
 		if(Validated)
 			Validated = initVertexArray();
 
@@ -180,7 +205,7 @@ private:
 
 	bool render()
 	{
-		glm::vec2 WindowSize(this->getWindowSize());
+ 		glm::vec2 WindowSize(this->getWindowSize());
 
 		{
 			glBindBuffer(GL_UNIFORM_BUFFER, BufferName[buffer::TRANSFORM]);
