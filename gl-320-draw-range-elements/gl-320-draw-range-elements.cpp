@@ -117,62 +117,37 @@ private:
 
 	bool initBuffer()
 	{
-		// 生成缓冲区对象名
-		// BUfferName中的每个Buffer从BufferName[0]中
-		// 执行完后会得到 BufferName[VERTEX] BufferName[ELEMENT] BufferName[TRANSPTION] 这三个数组
 		glGenBuffers(buffer::MAX, &BufferName[0]);
 
-		// 将对应的坐标存入BufferName[ELEMENT]中的GPU缓存中
-		// 初始化GPU索引缓冲区
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BufferName[buffer::ELEMENT]);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, ElementSize, ElementData, GL_STATIC_DRAW);
-		// 释放绑定
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-		// 初始化GPU顶点缓冲区VBO
 		glBindBuffer(GL_ARRAY_BUFFER, BufferName[buffer::VERTEX]);
 		glBufferData(GL_ARRAY_BUFFER, VertexSize, VertexData, GL_STATIC_DRAW);
-		// 释放绑定
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		
-		// uniform buffer中的GPU数据最少要按多少字节对齐，这是由GPU厂商硬件固定
+
 		GLint UniformBufferOffset(0);
 		glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &UniformBufferOffset);
-
-		  // 满足分配的内存的最低要求
-	     //  为什么不能直接用sizeof(mat4) 呢？？所有在GPU中的数据都要以GPU对齐为准
-		//   如果直接使用sizeof(mat4) 那么获取到的block size为64 ，GPU对齐要求为256字节，那么在工艺    单执行的时候就会出错。
 		GLint UniformBlockSize = glm::max(GLint(sizeof(glm::mat4)), UniformBufferOffset);
 
-		// 绑定UBO缓冲区
 		glBindBuffer(GL_UNIFORM_BUFFER, BufferName[buffer::TRANSFORM]);
-		
-		// 为该UBO在GPU上占用一块内存 不提供初始数据 之后CPU通过BufferName[buffer::TRANSFORM]
-		// 寻找这块内存 GPU通过semantic::uniform::TRANSFORM
 		glBufferData(GL_UNIFORM_BUFFER, UniformBlockSize, NULL, GL_DYNAMIC_DRAW);
-		// 释放绑定
 		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
 		return this->checkError("initBuffer");
 	}
 
 	bool initVertexArray()
 	{
-		// 生成一个VAO
 		glGenVertexArrays(1, &VertexArrayName);
-		//opengl 绑定这个VAO 
 		glBindVertexArray(VertexArrayName);
-		// 绑定VBO VB0中的数据存取到对应的buffer里
-		// 这段代码并不会被VAO记住 只是提供上下文
-		glBindBuffer(GL_ARRAY_BUFFER, BufferName[buffer::VERTEX]);
-		
-		//将GPU如何读取数据的规则写进VAO
-		//1对于顶点属性 2每个顶点取两个分量 3每个分量是FLOAT 数据来源是刚刚的绑定的GL_ARRAY_BUFFER 4不进行归一化 5从buffer的第0个字节开始 6数据是连续排列的
-		glVertexAttribPointer(semantic::attr::POSITION, 2, GL_FLOAT, GL_FALSE, 0, 0);
-		//允许顶点着色器使用POITION属性 这个启用状态也会被记录到VAO
-		glEnableVertexAttribArray(semantic::attr::POSITION);
+			glBindBuffer(GL_ARRAY_BUFFER, BufferName[buffer::VERTEX]);
+			glVertexAttribPointer(semantic::attr::POSITION, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
-		//告诉VAO EBO的绑定
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BufferName[buffer::ELEMENT]);
+			glEnableVertexAttribArray(semantic::attr::POSITION);
+
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BufferName[buffer::ELEMENT]);
 		glBindVertexArray(0);
 
 		return this->checkError("initVertexArray");
@@ -187,7 +162,7 @@ private:
 		if(Validated)
 			Validated = initProgram();
 		if(Validated)
-			Validated = initBuffer();                                              
+			Validated = initBuffer();
 		if(Validated)
 			Validated = initVertexArray();
 
@@ -196,81 +171,46 @@ private:
 
 	bool end()
 	{
-		// 删除之前使用的buffer 包括VBO EBO EBO 
-		// 具体的删除操作的为BufferName[VERTEX] BufferName[ELEMENT] BufferName[TRANSFORM]
 		glDeleteBuffers(buffer::MAX, &BufferName[0]);
-		
-		// 删除GPU这个工艺单 具体包括顶点着色器 片段着色器 接口映射信息 和Uniform block布局
-		// 所有的shader指令 和 programme状态都会被释放
 		glDeleteProgram(ProgramName);
-		// 删除VAO这个规则 避免大量VAO产生阻塞
 		glDeleteVertexArrays(1, &VertexArrayName);
+
 		return true;
 	}
 
 	bool render()
 	{
- 		glm::vec2 WindowSize(this->getWindowSize());
+		glm::vec2 WindowSize(this->getWindowSize());
 
 		{
-			//绑定UBO到当前buffer
 			glBindBuffer(GL_UNIFORM_BUFFER, BufferName[buffer::TRANSFORM]);
-			
-			//操作的是GL_UNIFORM_BUFFER 从当前缓冲区的起始位置开始操作
-			//只操作其中一个mat4
-			//我要进行写数据 就缓冲区的数据被覆盖
 			glm::mat4* Pointer = (glm::mat4*)glMapBufferRange(GL_UNIFORM_BUFFER, 0, sizeof(glm::mat4), GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
 
-			//构造投影矩阵 近裁剪面0.1 远裁剪面100 1/3的宽高比 垂直视角45°
 			glm::mat4 Projection = glm::perspective(glm::pi<float>() * 0.25f, WindowSize.x / 3.0f / WindowSize.y, 0.1f, 100.0f);
-		    
-			// model矩阵 单位矩阵 不做任何变换
 			glm::mat4 Model = glm::mat4(1.0f);
 
-			//将最终的投影矩阵写入GPU中的TRANSFORM.MVP中
 			*Pointer = Projection * this->view() * Model;
-			
-			//解除映射
 			glUnmapBuffer(GL_UNIFORM_BUFFER);
 		}
 
-		// 设置整个视图为当前窗口
 		glViewport(0, 0, static_cast<GLsizei>(WindowSize.x), static_cast<GLsizei>(WindowSize.y));
 
-		// 设置深度缓冲区
 		float Depth(1.0f);
-		
-		//清除颜色缓冲区
 		glClearBufferfv(GL_DEPTH, 0, &Depth);
 		glClearBufferfv(GL_COLOR, 0, &glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)[0]);
 
-		//GPU后续的所有调用 全部使用这个工艺单的顶点和着色器
 		glUseProgram(ProgramName);
 
-		//将TRANSFORM这块UBO绑定到TRANSFORM0中
 		glBindBufferBase(GL_UNIFORM_BUFFER, semantic::uniform::TRANSFORM0, BufferName[buffer::TRANSFORM]);
-
-		//绑定VAO
 		glBindVertexArray(VertexArrayName);
 
-
-		//上述所有的工作已经准备就绪 开始最终的渲染操作
-
-
-		//左视窗口
 		glViewport(static_cast<GLint>(WindowSize.x * 0 / 3), 0, static_cast<GLsizei>(WindowSize.x / 3), static_cast<GLsizei>(WindowSize.y));
-		//从偏移量0开始 使用索引数组中的前一半 画两个三角形
 		glDrawElements(GL_TRIANGLES, ElementCount / 2, GL_UNSIGNED_SHORT, BUFFER_OFFSET(0));
 
-		//中视窗口
 		glViewport(static_cast<GLint>(WindowSize.x * 1 / 3), 0, static_cast<GLsizei>(WindowSize.x / 3), static_cast<GLsizei>(WindowSize.y));
-		//使用索引数组中的后一半 画两个三角形
 		glDrawElementsInstancedBaseVertex(GL_TRIANGLES, ElementCount / 2, GL_UNSIGNED_SHORT, BUFFER_OFFSET(sizeof(GLushort) * ElementCount / 2), 1, 0);
 
-		//右视窗口
 		glViewport(static_cast<GLint>(WindowSize.x * 2 / 3), 0, static_cast<GLsizei>(WindowSize.x / 3), static_cast<GLsizei>(WindowSize.y));
-		
-		//从偏移量0+VertexCount/2==后一一半的索引中 画两个三角形
 		glDrawElementsInstancedBaseVertex(GL_TRIANGLES, ElementCount / 2, GL_UNSIGNED_SHORT, BUFFER_OFFSET(0), 1, VertexCount / 2);
 
 		return true;
