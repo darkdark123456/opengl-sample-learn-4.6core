@@ -201,28 +201,99 @@ private:
 		return this->checkError("initBuffer");
 	}
 
+	// FBO + 多重深度采样纹理先将图形画到内存中 再将内存中的图像画到屏幕之中
 	bool initTexture()
 	{
-		bool Validated(true);
 
+		// cpu ----> DIFFUSE 给几何体用
+		// cpu ----> MULTISAMPLE 深度专用
+
+
+		// GPU --->TEXTUE PROGRAMME 画几何体 深度写进MULTISAMPLE纹理
+		// GPU ---> SPLASH PROGRAMME 读取MULTISAMPLE ---> 手动解析MSAA --> 线性化深度 --->灰度显示
+
+
+		bool Validated(true);                                                               
+		//读取一张dds纹理图片 加载到CPU
 		gli::texture2d Texture(gli::load_dds((getDataDirectory() + TEXTURE_DIFFUSE).c_str()));
 		assert(!Texture.empty());
 
+		//告诉GPU接下来我要往GPU传输数据 每一行不要求四个字节对齐 这是为了压缩纹理安全
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
+		//GPU现在有两个纹理 	DIFFUSE	MULTISAMPLE
 		glGenTextures(texture::MAX, &TextureName[0]);
 
+		//我要在0号纹理槽 
 		glActiveTexture(GL_TEXTURE0);
+		//操作一个2D纹理对象 这个对象叫做 DIFFUSE
 		glBindTexture(GL_TEXTURE_2D, TextureName[texture::DIFFUSE]);
+
+
+		/***********************************************
+		* 这里扩展一个多重深度采样的原理 仅仅从理解上扩展 不讲数学原理
+		* 
+		* 1 假设屏幕被分割成许多个小格子 假设没有多重深度采样
+		* 每个像素只关心一个问题 这个像素点前面最靠近谁
+		* 带来的结果是 这个像素点要么完全在背景里 要么完全在物体的像素里
+		* 带来的后果是 物体边缘是锯齿 深度变化是突然跳变的 【物体像素】---> 直接跳变到 【背景象素里】
+		* 出现像素的割裂感
+		* 
+		* 2 多重深度采样 MSAA 假设当前的深度为4 类似于在当前的像素里装了4个小探头（4个采样点）
+		* 这4个采样点可能是2个探到当前物体 两个在背景里 于是GPU知道 这个像素是半遮挡状态
+		* 
+		***********************************************/
+
+
+		/*告诉GPU 你的纹理可以在[0,N]层之间进行最优选择*/
+
+		// 告诉GPU接下来的纹理是从第0层 mipmap开始使用的
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+
+		// 告诉GPU接下来你最多可以用到哪一层的mipmap
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(Texture.levels() - 1));
+
+
+
+		/*采样规则*/
+
+		// 当纹理需要被缩小时该使用什么取样规则
+		// 例如纹理是1024*1024 但是屏幕上只画100*100 纹理需要缩小
+		// 不使用插值 选一层mipmap 再直接取一个最近的元素
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+		
+		// 当纹理需要被放大时使用什么规则
+		// 例如纹理是256*256 屏幕上画1024*1024 --->一个纹理对应一大块像素 方块感强 像素边缘清晰 类似于
+		// 我的世界
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		
+	
+		/*越界处理规则 纹理的坐标映射是[0,1]*/
+
+		// 横向越界 超出0-1的部分 直接贴着边缘取颜色 ---> 不重复 不镜像 不黑边
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		
+		// 横向越界 超出0-1的部分 直接贴着边缘取颜色 ----> 不重复 不镜像 不黑边
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		
+
+
+		  // 向GPU上传纹理压缩数据 为什么要使用纹理压缩 ？
+		 //  1减少显存占用 
+		//   2对于压缩的纹理GPU传输处理数据更快
 		for(std::size_t Level = 0; Level < Texture.levels(); ++Level)
 		{
+
+		   /*
+			*GL_TEXTURE_2D,                      指定上传的数据是一张纹理
+			*GLint(Level),                       纹理的层级[0,N] <--->[最大分辨率，最小分辨率]
+			*GL_COMPRESSED_RGB_S3TC_DXT1_EXT,    指定纹理的压缩格式 DXT1
+			*GLsizei(Texture[Level].extent().x), 当前mipmap的宽度
+			*GLsizei(Texture[Level].extent().y), 当前mipmap的高度
+			*0,                                  不适用额外的边界
+			*GLsizei(Texture[Level].size()),     当前mipmap层级图像的大小
+			*Texture[Level].data())              当前miapmap层级图像的数据 
+			*/           
 			glCompressedTexImage2D(GL_TEXTURE_2D,
 				GLint(Level),
 				GL_COMPRESSED_RGB_S3TC_DXT1_EXT,
@@ -233,20 +304,30 @@ private:
 				Texture[Level].data());
 		}
 		
+		// 获取当前的窗口尺寸
 		glm::ivec2 WindowSize(this->getWindowSize());
 
+		// 告诉GPU激活纹理单元0
 		glActiveTexture(GL_TEXTURE0);
+
+		// 通知GPU绑定多重深度采样纹理单元
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, TextureName[texture::MULTISAMPLE]);
 		
 		this->checkError("initTexture 1");
 		
+		// 使用的mipmap层级都是0级
 		glTexParameteri(GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_BASE_LEVEL, 0);
 		glTexParameteri(GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_MAX_LEVEL, 0);
 		
 		this->checkError("initTexture 2");
 		
+		// 创建一个2D多重采样纹理 它有四个探测器 
+		// 对于当前纹理存储的是深度信息 而不是 颜色信息 
+		// 指定纹理的尺寸
+		// GL_TRUE 告诉GPU纹理中的每一个像素都包含四个样本数据进行采样 是一个完整的多重采样纹理
 		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT24, GLsizei(WindowSize.x), GLsizei(WindowSize.y), GL_TRUE);
 		
+		// 确保纹理数据是4字节对齐的 加快GPU的解算速度
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
 		return Validated && this->checkError("initTexture");
@@ -285,7 +366,7 @@ private:
 		glBindVertexArray(0);
 
 
-
+		// 在任何绘制之前 OpenGL core file 要求绑定一个VAO ，即使你没有用
 		glBindVertexArray(VertexArrayName[program::SPLASH]);
 		glBindVertexArray(0);
 
@@ -296,9 +377,18 @@ private:
 	{
 		bool Validated(true);
 
+		/*帧缓冲区 把一个多重采样的深度纹理附加到这个帧缓冲区上  帧缓冲区相当于一个虚拟画布
+		 渲染的内容可以先画到这个画布上 而不是直接显示到屏幕上*/
+
+		// 创建一个帧缓冲区编号 
 		glGenFramebuffers(GLsizei(framebuffer::MAX), &FramebufferName[0]);
+
+		// 绑定一个帧缓冲区 以后所有的绘制操作都会在当前帧缓冲区上进行
 		glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName[framebuffer::DEPTH_MULTISAMPLE]);
+
+		// 告诉GPU将后面的 TextureName[texture::MULTISAMPLE] 纹理 作为神附件 附加到帧缓冲上 ，附加的是纹理的第一个层级
 		glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, TextureName[texture::MULTISAMPLE], 0);
+
 		glDrawBuffer(GL_NONE);
 
 		if(!this->checkFramebuffer(FramebufferName[framebuffer::DEPTH_MULTISAMPLE]))
